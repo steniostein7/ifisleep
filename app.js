@@ -148,5 +148,72 @@ onValue(ref(db, 'estado_jogo/fase_atual'), (snapshot) => {
 });
 
 function prepararNoite1() {
-    console.log("Preparando a tela da Noite 1 para o papel atual...");
+    // 1. O Banco de Rimas do Bardo para o início da Noite
+    const rimasNoite = [
+        "O sol se esconde, a fogueira crepita. A noite é escura e a morte não hesita.",
+        "As sombras avançam, a taverna silencia. Quem verá a luz do próximo dia?",
+        "Fechem as portas, apaguem a luz. Aquele que dorme, o destino conduz."
+    ];
+    
+    // Sorteia uma rima
+    const rimaEscolhida = rimasNoite[Math.floor(Math.random() * rimasNoite.length)];
+    
+    // 2. Injeta a rima na tela
+    const painelBardo = document.createElement('div');
+    painelBardo.style.marginTop = "20px";
+    painelBardo.style.padding = "15px";
+    painelBardo.style.border = "1px solid #8b0000"; // Borda vermelho sangue
+    painelBardo.style.backgroundColor = "#1a0000";
+    
+    const textoBardo = document.createElement('p');
+    textoBardo.innerHTML = `🎶 <em>"${rimaEscolhida}"</em>`;
+    textoBardo.style.fontSize = "1.2em";
+    
+    painelBardo.appendChild(textoBardo);
+    gameScreen.appendChild(painelBardo);
+
+    // 3. Sistema de explicação do papel
+    const meuPapel = roleText.innerText; // Pega o papel que está na tela
+    
+    // Dicionário com o manual de regras resumido
+    const manualHabilidades = {
+        "Necromante": "💀 Sua Habilidade: Escolha um alvo para eliminar esta noite. (Uma vez por partida, você pode invocar a Ressurreição em um morto).",
+        "Mago": "🧙‍♂️ Sua Habilidade: Escolha um jogador para receber o Escudo Mágico. Ele sobreviverá ao ataque do Necromante.",
+        "Paladino": "🛡️ Sua Habilidade: Escolha um jogador para investigar. O Bardo revelará se a aura dele é Pura ou Corrompida.",
+        "Bruxa": "🧪 Sua Habilidade: Envie a Poção do Desmaio ou da Força para alguém. Lembre-se: não envie poções para a mesma pessoa duas noites seguidas!",
+        "Aldeão": "🧑‍🌾 Sua Habilidade: Nenhuma. Você apenas dorme. Preste atenção aos debates de amanhã para tentar enforcar o culpado no julgamento."
+    };
+
+    // Cria o botão de ajuda
+    const btnAjuda = document.createElement('button');
+    btnAjuda.innerText = "Lembrar minha Habilidade";
+    btnAjuda.style.marginTop = "20px";
+    btnAjuda.style.backgroundColor = "#333";
+    
+    // Cria o texto de explicação (começa invisível)
+    const textoAjuda = document.createElement('p');
+    textoAjuda.innerText = manualHabilidades[meuPapel] || "Aguardando revelação...";
+    textoAjuda.style.display = "none";
+    textoAjuda.style.color = "#aaa";
+    textoAjuda.style.fontStyle = "italic";
+
+    // Lógica do clique (mostra/esconde)
+    btnAjuda.addEventListener('click', () => {
+        if (textoAjuda.style.display === "none") {
+            textoAjuda.style.display = "block";
+            btnAjuda.innerText = "Esconder Habilidade";
+        } else {
+            textoAjuda.style.display = "none";
+            btnAjuda.innerText = "Lembrar minha Habilidade";
+        }
+    });
+
+    gameScreen.appendChild(btnAjuda);
+    gameScreen.appendChild(textoAjuda);
+    
+    // 4. Container onde os botões de ação (atacar, proteger, etc) vão aparecer depois
+    const painelAcoes = document.createElement('div');
+    painelAcoes.id = "painel-acoes-noite";
+    painelAcoes.style.marginTop = "30px";
+    gameScreen.appendChild(painelAcoes);
 }
