@@ -44,7 +44,17 @@
     <div id="game-screen">
         <h2 id="welcome-message"></h2>
         <p>Aguardando outros viajantes...</p>
+        
         <ul id="players-list"></ul>
+
+        <!-- Botão para iniciar a partida (inicialmente oculto) -->
+        <button id="btn-start" style="display: none; margin: 20px auto;">Começar Jogo</button>
+        
+        <!-- Painel onde o jogador descobrirá quem ele é -->
+        <div id="my-role-display" style="display: none; margin-top: 20px; border: 1px dashed #d4af37; padding: 15px;">
+            <h3>Seu Papel:</h3>
+            <p id="role-text" style="font-size: 1.2em; font-weight: bold;"></p>
+        </div>
     </div>
 
     <!-- Importa o nosso script principal como um Módulo JS -->
