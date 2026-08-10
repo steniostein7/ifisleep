@@ -1,8 +1,8 @@
-// Importando do CDN para funcionar direto no navegador pelo GitHub Pages
+// 1. Importações do Firebase pelo CDN
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, push, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import { getDatabase, ref, push, set, onValue, get, child, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-// Sua configuração do Firebase (removi o Analytics, pois não precisaremos dele para o jogo)
+// 2. Configuração do seu Projeto Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyAyw7Q7NzfITBFdU1YSnL1sDnAbU86uezQ",
   authDomain: "if-i-sleep.firebaseapp.com",
@@ -13,11 +13,11 @@ const firebaseConfig = {
   appId: "1:901443788902:web:51241ea974a14d7852cda7"
 };
 
-// Inicializa o Firebase e o Banco de Dados
+// 3. Inicializando o Firebase e o Banco de Dados
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// Mapeando os elementos do HTML
+// 4. Mapeando os elementos do HTML
 const lobbyScreen = document.getElementById('lobby-screen');
 const gameScreen = document.getElementById('game-screen');
 const playerNameInput = document.getElementById('player-name');
@@ -30,7 +30,7 @@ const roleText = document.getElementById('role-text');
 
 let myPlayerId = null; // Guardará a ID única do jogador neste navegador
 
-// Função para embaralhar os papéis (Algoritmo de Fisher-Yates)
+// 5. Função para embaralhar os papéis (Algoritmo de Fisher-Yates)
 function embaralhar(array) {
     for (let i = array.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -39,16 +39,17 @@ function embaralhar(array) {
     return array;
 }
 
-// Evento: Quando clicar no botão de Entrar
+// 6. Evento: Quando o jogador entra na taverna
 btnJoin.addEventListener('click', () => {
     const playerName = playerNameInput.value.trim();
     
     if (playerName !== "") {
+        // Esconde o lobby e mostra a área do jogo
         lobbyScreen.style.display = "none";
         gameScreen.style.display = "block";
         welcomeMessage.innerText = `O Bardo afina o alaúde para ${playerName}...`;
 
-        // Cria o jogador e salva a ID dele
+        // Salva o jogador no banco de dados e guarda a ID dele
         const newPlayerRef = push(ref(db, 'lobby'));
         myPlayerId = newPlayerRef.key; 
         
@@ -58,7 +59,7 @@ btnJoin.addEventListener('click', () => {
             papel: "aguardando"
         });
 
-        // Escuta os jogadores entrando
+        // Fica escutando quem entra para atualizar a lista
         onValue(ref(db, 'lobby'), (snapshot) => {
             playersList.innerHTML = ""; 
             let playerCount = 0;
@@ -72,15 +73,14 @@ btnJoin.addEventListener('click', () => {
                 li.innerText = `🔥 ${player.nome}`;
                 playersList.appendChild(li);
 
-                // Se o jogo já distribuiu os papéis, mostra na tela apenas o MEU papel
+                // Se o jogo já distribuiu os papéis, revela o do jogador na tela dele
                 if (playerId === myPlayerId && player.papel !== "aguardando") {
                     myRoleDisplay.style.display = "block";
                     roleText.innerText = player.papel;
                 }
             });
 
-            // Mostra o botão de começar jogo se tivermos pelo menos 2 pessoas (para facilitar seus testes!)
-            // No jogo final, mudaremos para 5 ou mais.
+            // Mostra o botão de começar se houver pelo menos 2 jogadores (para testes)
             if (playerCount >= 2) {
                 btnStart.style.display = "inline-block";
             }
@@ -90,43 +90,63 @@ btnJoin.addEventListener('click', () => {
     }
 });
 
-// Evento: Quando alguém clicar em "Começar Jogo"
+// 7. Evento: Quando o anfitrião clica em "Começar Jogo"
 btnStart.addEventListener('click', () => {
-    // Lê todos os jogadores atuais no lobby
-    import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js').then((module) => {
-        const get = module.get;
-        const child = module.child;
-        const update = module.update;
-
-        get(child(ref(db), 'lobby')).then((snapshot) => {
-            if (snapshot.exists()) {
-                const jogadores = snapshot.val();
-                const ids = Object.keys(jogadores);
-                
-                // Cria a lista de papéis baseada na quantidade de jogadores
-                let papeis = ["Necromante", "Mago", "Paladino", "Bruxa"];
-                
-                // Preenche o resto com Aldeões
-                while(papeis.length < ids.length) {
-                    papeis.push("Aldeão");
-                }
-                
-                // Se tiver pouca gente testando, corta os papéis para caber
-                papeis = papeis.slice(0, ids.length); 
-                
-                papeis = embaralhar(papeis); // Mistura a sacola!
-
-                // Atualiza o banco de dados com o papel de cada um
-                let updates = {};
-                ids.forEach((id, index) => {
-                    updates[`/lobby/${id}/papel`] = papeis[index];
-                });
-                
-                update(ref(db), updates);
-                
-                // Esconde o botão de começar para não clicarem duas vezes
-                btnStart.style.display = "none";
+    // Busca a lista de jogadores atual no banco
+    get(child(ref(db), 'lobby')).then((snapshot) => {
+        if (snapshot.exists()) {
+            const jogadores = snapshot.val();
+            const ids = Object.keys(jogadores);
+            
+            // Define os papéis básicos
+            let papeis = ["Necromante", "Mago", "Paladino", "Bruxa"];
+            
+            // Preenche o resto com Aldeões, se houver mais jogadores
+            while(papeis.length < ids.length) {
+                papeis.push("Aldeão");
             }
-        });
+            
+            // Corta a lista de papéis para bater exatamente com a quantidade de jogadores (em testes)
+            papeis = papeis.slice(0, ids.length); 
+            
+            // Mistura os papéis
+            papeis = embaralhar(papeis);
+
+            // Prepara a atualização do banco de dados com o papel de cada um
+            let updates = {};
+            ids.forEach((id, index) => {
+                updates[`/lobby/${id}/papel`] = papeis[index];
+            });
+            
+            // Salva os papéis no banco
+            update(ref(db), updates);
+            
+            // Muda a fase do jogo para a Noite 1 (isso aciona todos os navegadores conectados)
+            set(ref(db, 'estado_jogo/fase_atual'), 'noite_1');
+
+            // Esconde o botão para não ser clicado de novo
+            btnStart.style.display = "none";
+        }
     });
 });
+
+// 8. O Ouvinte Mestre: Fica de olho na fase do jogo para mudar a tela de todos
+onValue(ref(db, 'estado_jogo/fase_atual'), (snapshot) => {
+    const fase = snapshot.val();
+    
+    if (fase === 'noite_1') {
+        // Esconde a lista do lobby
+        playersList.style.display = "none";
+        
+        // Altera o clima da tela
+        welcomeMessage.innerText = "A Noite Caiu sobre a Taverna...";
+        welcomeMessage.style.color = "#4a90e2"; // Tom azulado para noite
+        
+        // Chama a função que vai construir os botões noturnos (a ser programada no próximo passo)
+        prepararNoite1();
+    }
+});
+
+function prepararNoite1() {
+    console.log("Preparando a tela da Noite 1 para o papel atual...");
+}
