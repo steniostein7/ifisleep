@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>If I Sleep...</title>
+    <style>
+        /* CSS básico com tema sombrio medieval */
+        body { 
+            background-color: #121212; 
+            color: #d4af37; /* Dourado envelhecido */
+            font-family: 'Courier New', Courier, monospace; 
+            text-align: center; 
+            padding: 50px; 
+        }
+        h1 { color: #8b0000; /* Vermelho sangue escuro */ }
+        input, button { 
+            padding: 10px; 
+            margin: 5px; 
+            font-family: inherit; 
+            background-color: #2a2a2a;
+            color: #d4af37;
+            border: 1px solid #d4af37;
+        }
+        button { cursor: pointer; }
+        button:hover { background-color: #d4af37; color: #121212; }
+        
+        /* Oculta a tela de jogo até o usuário digitar o nome */
+        #game-screen { display: none; }
+        ul { list-style-type: none; padding: 0; }
+    </style>
+</head>
+<body>
+    <h1>If I Sleep...</h1>
+    
+    <!-- Tela de Entrada -->
+    <div id="lobby-screen">
+        <p>"Aproxime-se do fogo. Diga-me, qual o seu nome?"</p>
+        <input type="text" id="player-name" placeholder="Seu nome...">
+        <button id="btn-join">Entrar na Taverna</button>
+    </div>
+
+    <!-- Tela do Jogo -->
+    <div id="game-screen">
+        <h2 id="welcome-message"></h2>
+        <p>Aguardando outros viajantes...</p>
+        <ul id="players-list"></ul>
+    </div>
+
+    <!-- Importa o nosso script principal como um Módulo JS -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>
