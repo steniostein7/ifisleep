@@ -1,14 +1,92 @@
 {
   "rules": {
-    // AVISO: regras abertas apenas para desenvolvimento/testes.
-    // ANTES DE PUBLICAR O JOGO:
-    //   1. Ative a Autenticação Anônima no Firebase.
-    //   2. Substitua estas regras por verificações de auth.uid e por
-    //      regras que impeçam clientes de escrever em /game/state,
-    //      /game/private e /game/log (somente o host deve poder).
-    "game": {
-      ".read": true,
-      ".write": true
+    "rooms": {
+      "$code": {
+        // Leitura pública necessária para o jogo (todos veem a sala).
+        ".read": true,
+
+        // ============ MODO ÁRBITRO (Cloud Functions) — RECOMENDADO ============
+        // Se room.arbitrated === true, SOMENTE as Cloud Functions (admin,
+        // que bypassam regras) alteram a sala. Nenhum cliente consegue
+        // escrever nada: todas as expressões abaixo exigem arbitrated !== true.
+        // Em modo clássico (arbitrated ausente/false), vale a regra do host.
+
+        "hostId":    { ".write": "auth != null && data.child('arbitrated').val() !== true && (!data.exists() || data.val() === auth.uid)" },
+        "createdAt": { ".write": "auth != null && data.child('arbitrated').val() !== true && (!data.exists() || newData.val() === data.val())" },
+        "setup":     { ".write": "auth != null && data.parent().child('arbitrated').val() !== true && root.child('rooms/'+$code+'/hostId').val() === auth.uid" },
+        "phase":     { ".write": "auth != null && data.parent().child('arbitrated').val() !== true && root.child('rooms/'+$code+'/hostId').val() === auth.uid" },
+        "winner":    { ".write": "false" },
+        "dawnDeadline": { ".write": "auth != null && data.parent().child('arbitrated').val() !== true && root.child('rooms/'+$code+'/hostId').val() === auth.uid" },
+        "dayDeadline":  { ".write": "auth != null && data.parent().child('arbitrated').val() !== true && root.child('rooms/'+$code+'/hostId').val() === auth.uid" },
+        "voteDeadline": { ".write": "auth != null && data.parent().child('arbitrated').val() !== true && root.child('rooms/'+$code+'/hostId').val() === auth.uid" },
+        "hangDeadline": { ".write": "auth != null && data.parent().child('arbitrated').val() !== true && root.child('rooms/'+$code+'/hostId').val() === auth.uid" },
+
+        // Lobby: cada jogador escreve apenas o próprio nó players/{uid}
+        "players": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && data.parent().parent().child('arbitrated').val() !== true",
+            ".validate": "newData.hasChildren(['name']) && newData.child('name').isString() && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 16"
+          }
+        },
+
+        // Heartbeat de presença/onDisconnect: cada um escreve só o seu
+        "presence": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && data.parent().parent().child('arbitrated').val() !== true"
+          }
+        },
+
+        // Chat: autor precisa ser auth.uid e estar na sala
+        "chat": {
+          "$msgid": {
+            ".write": "auth != null && data.parent().parent().child('arbitrated').val() !== true && newData.child('by').val() === auth.uid && root.child('rooms/'+$code+'/players/'+auth.uid).exists()",
+            ".validate": "newData.child('text').isString() && newData.child('text').val().length <= 300"
+          }
+        },
+
+        // Filas de pedidos: cliente publica com by = auth.uid;
+        // somente o host (modo clássico) consome/apaga.
+        "actionRequests": {
+          "$rid": {
+            ".write": "auth != null && data.parent().parent().child('arbitrated').val() !== true && (root.child('rooms/'+$code+'/hostId').val() === auth.uid || (newData.exists() && newData.child('by').val() === auth.uid))",
+            ".validate": "!newData.exists() || newData.child('by').val() === auth.uid"
+          }
+        },
+        "potionRequests": {
+          "$rid": {
+            ".write": "auth != null && data.parent().parent().child('arbitrated').val() !== true && (root.child('rooms/'+$code+'/hostId').val() === auth.uid || (newData.exists() && newData.child('by').val() === auth.uid))",
+            ".validate": "!newData.exists() || newData.child('by').val() === auth.uid"
+          }
+        },
+        "voteRequests": {
+          "$rid": {
+            ".write": "auth != null && data.parent().parent().child('arbitrated').val() !== true && (root.child('rooms/'+$code+'/hostId').val() === auth.uid || (newData.exists() && newData.child('by').val() === auth.uid))",
+            ".validate": "!newData.exists() || newData.child('by').val() === auth.uid"
+          }
+        },
+
+        // Estado do jogo: SOMENTE o host no modo clássico.
+        // Em modo árbitro os segredos vivem em secretState (lido só por admin);
+        // game/state público é escrito apenas pelas Functions.
+        "game": {
+          ".write": "auth != null && data.parent().child('arbitrated').val() !== true && root.child('rooms/'+$code+'/hostId').val() === auth.uid"
+        },
+
+        // Envelopes privados (modo árbitro): só o destinatário lê; ninguém escreve.
+        "inbox": {
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": "false"
+          }
+        },
+
+        // Bloco secreto do modo clássico: papéis NÃO ficam acessíveis a clientes.
+        // (No modo clássico o host ainda conhece tudo — limitação documentada.)
+        "secretState": {
+            ".read": "auth != null && root.child('rooms/'+$code+'/hostId').val() === auth.uid",
+            ".write": "auth != null && root.child('rooms/'+$code+'/hostId').val() === auth.uid"
+        }
+      }
     }
   }
 }
