@@ -188,4 +188,21 @@ test("clearQueues retorna nulls para apagar as filas", () => {
     assert.strictEqual(q.voteRequests, null);
 });
 
+// ---------- sanitizePublicState ----------
+test("sanitizePublicState esconde segredos e converte fila legado de privates", () => {
+    const s = makeState(FULL);
+    s.actions = { necroKill: { by: "n", targetId: "m" } };
+    s.pendingPotion = { targetId: "a1", potion: "desmaio" };
+    s.outbox = { p: [{ type: "aura", text: "CORROMPI💀DA" }] };
+    s.privates = [{ to: "p", text: "legado 1" }, { to: "w", text: "legado 2" }];
+    const pub = A.sanitizePublicState(s);
+    assert.deepStrictEqual(pub.actions, {}, "intenções noturnas não vazam");
+    assert.strictEqual(pub.pendingPotion, null, "tipo da poção não vaza");
+    assert.deepStrictEqual(pub.outbox, {}, "envelopes pendentes não vazam");
+    assert.ok(Array.isArray(pub.privates) === false, "privates vira mapa uid→[msg]");
+    assert.strictEqual(pub.privates.p[0].text, "legado 1");
+    assert.strictEqual(pub.privates.w.length, 1);
+    assert.notStrictEqual(pub, s, "não muta o estado original");
+});
+
 console.log(`\n${passed} testes do árbitro passaram.`);

@@ -64,14 +64,47 @@ async function main() {
     let roomCode = null;
     let isHost = false;
     let myName = "";
-    let latestRoom = null;   // snapshot bruto de rooms/{code}
-    let latestState = null;  // snapshot de rooms/{code}/game/state
+    let latestRoom = null;   // snapshot bruto de rooms/{code} (nó público)
+    let latestState = null;  // estado VISÍVEL a todos (sanitizado)
+    let hostShadow = null;   // modo host: cópia completa com segredos (ações, poção)
     let myPrivateMsgs = [];  // últimas vistas
     let toastQueueSeen = new Set();
     let actionSelection = null; // seleção de alvo na UI noturna
     let potionChoice = "desmaio";
     let voteSelection = null;
     let countdownInterval = null;
+
+    // ---------- Sombra do host (localStorage, sobrevive a F5) ----------
+    function persistShadow(st) {
+        if (!isHost || !roomCode) return;
+        try { localStorage.setItem("iis_shadow_" + roomCode, JSON.stringify(st)); } catch (e) {}
+    }
+    function loadShadow(code) {
+        try {
+            const raw = localStorage.getItem("iis_shadow_" + code);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    }
+    function clearShadow() {
+        if (!roomCode) return;
+        try { localStorage.removeItem("iis_shadow_" + roomCode); } catch (e) {}
+    }
+    // Host escreve o estado completo na sombra e o sanitizado no banco.
+    async function writeGameState(st, extraRoomUpdates = {}) {
+        hostShadow = st;
+        persistShadow(st);
+        await update(ref(db, `rooms/${roomCode}`), {
+            "game/state": sanitizePublicState(st), ...extraRoomUpdates,
+        });
+    }
+    // Fonte da verdade do host durante a NOITE (o nó público tem actions={}).
+    function hostState(room) {
+        const pub = room.game?.state;
+        if (!pub) return null;
+        if (!isHost) return pub;
+        if (hostShadow && hostShadow.night === pub.night) return hostShadow;
+        return pub;
+    }
 
     // ---------- Código da sala ----------
     function genCode() {
@@ -120,6 +153,7 @@ async function main() {
 
     function enterRoom(code) {
         roomCode = code;
+        if (isHost) hostShadow = loadShadow(code); // sobrevive a F5 do host
         showScreen("lobby");
         $("room-code-display").textContent = code;
         attachListeners();          // listener mestre da sala (dirige toda a UI)
@@ -200,19 +234,34 @@ async function main() {
         const initialState = {
             players, night: 1, stepIndex: 0,
             actions: {}, pendingPotion: null,
-            log: [], privates: {}, votes: {},
+            log: [], privates: {}, votes: {}, outbox: {},
             winner: null, dayDeadline: null, voteDeadline: null,
             startedAt: Date.now(),
         };
-        await update(ref(db, `rooms/${roomCode}`), {
-            phase: "night_1",
-            game: { state: initialState },
-        });
+        await update(ref(db, `rooms/${roomCode}`), { phase: "night_1" });
+        await writeGameState(initialState); // sombra completa + nó público sanitizado
     });
 
     // ---------- Máquina de fases (host) ----------
     // Fases: night_N → dawn_N → day_N → vote_N → hang_N → night_(N+1) ... | finished
     function phaseBase(phase) { return String(phase).replace(/_\d+$/, ""); }
+
+    // Estado para a MINHA UI: durante a noite, o host usa a sombra (o nó
+    // público tem actions={} sanitizado); os demais clientes consultam as
+    // filas públicas para saber se já agiram nesta fase.
+    function uiState(room) {
+        const pub = room.game?.state;
+        if (!pub) return null;
+        if (isHost && phaseBase(room.phase) === "night" &&
+            hostShadow && hostShadow.night === pub.night) return hostShadow;
+        return pub;
+    }
+    function nightHasActedAnywhere(room, uid) {
+        const st = uiState(room);
+        if (st && nightHasActed(st, uid)) return true;
+        const q = room.actionRequests || {};
+        return Object.values(q).some(r => r && r.by === uid);
+    }
 
     // Host: verifica se todos os agentes do passo atual agiram (ou timeout)
     function currentStepActors(state, stepIndex) {
@@ -253,7 +302,7 @@ async function main() {
         if (!isHost) return;
         const phase = room.phase || "lobby";
         const base = phaseBase(phase);
-        const state = room.game?.state;
+        const state = hostState(room); // sombra com segredos durante a noite
         if (!state) return;
 
         if (base === "night") {
@@ -282,24 +331,17 @@ async function main() {
 
     async function advanceStep(state, room) {
         const next = (state.stepIndex ?? 0) + 1;
-        await update(ref(db, `rooms/${roomCode}/game/state`), { stepIndex: next });
+        await writeGameState({ ...state, stepIndex: next });
     }
 
     async function goToEndOfNight(state, room) {
         if (hostNightTimer) return; // evita corrida
         hostNightTimer = setTimeout(async () => {
             hostNightTimer = null;
-            const fresh = await get(ref(db, `rooms/${roomCode}/game/state`));
-            const st = fresh.val();
+            const st = hostShadow || (await get(ref(db, `rooms/${roomCode}/game/state`))).val();
             if (!st || st.stepIndex < NIGHT_ORDER.length) return;
-            const resolved = resolveNight(st);
-            // monta privates por jogador (acumula histórico existente)
-            const privates = st.privates || {};
-            for (const pm of resolved.privates.splice(0)) {
-                privates[pm.to] = (privates[pm.to] || []).concat([{ text: pm.text, at: Date.now() }]);
-            }
-            delete resolved.privates;
-            resolved.privates = privates;
+            let resolved = resolveNight(st);
+            resolved = foldOutboxIntoPrivates(resolved); // entrega os segredos do outbox
             resolved.stepIndex = 0;
             resolved.votes = {};
             stepDeadlineFor = -1;
@@ -312,9 +354,8 @@ async function main() {
             } else {
                 nextPhase = "day_" + resolved.night;    // sem poção pendente → dia direto
             }
-            await update(ref(db, `rooms/${roomCode}`), {
+            await writeGameState(resolved, {
                 phase: nextPhase,
-                "game/state": resolved,
                 dayDeadline: nextPhase.startsWith("day_") ? Date.now() + DAY_MS : null,
             });
             if (resolved.winner) finalizeEnd(resolved);
@@ -337,10 +378,10 @@ async function main() {
             await update(ref(db, `rooms/${roomCode}`), { dawnDeadline: now + DAWN_MS });
         }
         if (base === "dawn" && room.dawnDeadline && now >= room.dawnDeadline) {
-            const st = room.game.state;
+            const st = hostShadow || room.game.state;
             const resolved = resolveDawn(st, null); // ninguém decidiu → descarte
-            await update(ref(db, `rooms/${roomCode}`), {
-                phase: "day_" + st.night, "game/state": resolved, dawnDeadline: null,
+            await writeGameState(resolved, {
+                phase: "day_" + st.night, dawnDeadline: null,
                 dayDeadline: now + DAY_MS,
             });
         }
@@ -359,43 +400,31 @@ async function main() {
     }
 
     async function openVote(room) {
-        const st = room.game.state;
-        await update(ref(db, `rooms/${roomCode}`), {
+        const st = hostShadow || room.game.state;
+        await writeGameState({ ...st, votes: {} }, {
             phase: "vote_" + st.night,
-            "game/state/votes": {},
             voteDeadline: Date.now() + VOTE_MS,
             dayDeadline: null,
         });
     }
 
     async function closeVote(room) {
-        const st = room.game.state;
+        const st = hostShadow || room.game.state;
         const votes = st.votes || {};
         const res = tallyVotes(st, votes);
         const after = applyHanging(st, res.top);
         after.votes = {};
-        if (after.winner) {
-            await update(ref(db, `rooms/${roomCode}`), {
-                phase: "hang_" + st.night,
-                "game/state": after,
-                "game/lastTally": res.counts,
-                hangDeadline: Date.now() + HANG_MS,
-                voteDeadline: null,
-            });
-            finalizeEnd(after);
-            return;
-        }
-        await update(ref(db, `rooms/${roomCode}`), {
+        await writeGameState(after, {
             phase: "hang_" + st.night,
-            "game/state": after,
             "game/lastTally": res.counts,
             hangDeadline: Date.now() + HANG_MS,
             voteDeadline: null,
         });
+        if (after.winner) finalizeEnd(after);
     }
 
     async function startNextNight(room) {
-        const st = room.game.state;
+        const st = hostShadow || room.game.state;
         if (st.winner) { finalizeEnd(st); return; }
         const next = JSON.parse(JSON.stringify(st));
         next.night = st.night + 1;
@@ -403,10 +432,10 @@ async function main() {
         next.actions = {};
         next.pendingPotion = null;
         next.log = [];
+        next.outbox = {};
         stepDeadlineFor = -1;
-        await update(ref(db, `rooms/${roomCode}`), {
+        await writeGameState(next, {
             phase: "night_" + next.night,
-            "game/state": next,
             hangDeadline: null,
             dayDeadline: null,
             voteDeadline: null,
@@ -417,8 +446,8 @@ async function main() {
     async function finalizeEnd(state) {
         if (endFinalized) return;
         endFinalized = true;
-        const reveal = {};
-        for (const [id, p] of Object.entries(state.players)) reveal[id] = { role: p.role, alive: p.alive };
+        const reveal = buildReveal(state); // papéis só agora, no fim
+        clearShadow();
         await update(ref(db, `rooms/${roomCode}`), { phase: "finished", "game/reveal": reveal, winner: state.winner });
     }
 
@@ -429,7 +458,7 @@ async function main() {
         if (phase === "lobby") { showScreen("lobby"); renderRoom(room); return; }
         if (phase === "finished") { renderEnd(room); return; }
         showScreen("game");
-        const state = room.game?.state;
+        const state = uiState(room); // host à noite usa a sombra (actions visíveis só p/ ele)
         if (!state) return;
         renderGameTop(state, room);
         renderPhase(state, room, base);

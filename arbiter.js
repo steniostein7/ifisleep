@@ -183,6 +183,28 @@ function foldOutboxIntoPrivates(state) {
     return s;
 }
 
+// Sanitiza o estado completo ANTES de escrevê-lo em game/state (nó público):
+//  • transforma a fila legado privates:[{to,text}] em mapa uid→[mensagens];
+//  • remove segredos que não devem ser replicados no nó público:
+//    actions (intenções noturnas com alvos), pendingPotion (tipo da poção) e
+//    outbox (envelopes ainda não entregues).
+// O host mantém uma cópia completa (com segredos) na memória/localStorage —
+// é assim que o Paladino continua recebendo o Radar Sombrio mesmo sem o
+// bloco secreto secretState no banco.
+function sanitizePublicState(state) {
+    let s = state;
+    if (Array.isArray(s.privates)) {
+        const map = {};
+        for (const pm of s.privates) {
+            if (!pm || !pm.to) continue;
+            const { to, ...msg } = pm;
+            map[to] = (map[to] || []).concat([{ ...msg, at: msg.at || Date.now() }]);
+        }
+        s = { ...s, privates: map };
+    }
+    return { ...s, actions: {}, pendingPotion: null, outbox: {} };
+}
+
 // Remove pendências de fila ao trocar de fase (higiene da sala).
 function clearQueues() {
     return { actionRequests: null, potionRequests: null, voteRequests: null };
@@ -194,7 +216,7 @@ const ARBITER = {
     phaseBase, currentStepActors, stepDone, validateNightRequest,
     applyNightAction, planAfterAction, endNight, openVote, closeVote,
     startNextNight, resolveDawnPhase, validateVote, buildReveal,
-    foldOutboxIntoPrivates, clearQueues,
+    foldOutboxIntoPrivates, clearQueues, sanitizePublicState,
 };
 
 if (typeof module !== "undefined" && module.exports) {
