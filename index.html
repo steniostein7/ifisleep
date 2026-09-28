@@ -142,172 +142,706 @@
             text-align: left;
             font-size: .9em;
         }
-        .card .label { color: var(--muted); text-transform: uppercase; font-size: .8em; letter-spacing: 1px; }
-        .alive-list li { padding: 2px 0; }
-        .alive-list li.dead-name { color: #555; text-decoration: line-through; }
+   // ============================================================================
+// 🎭 FÁBRICA DE ESTADOS E CONFIGURAÇÃO INICIAL
+// ============================================================================
 
-        /* ===== Votação ===== */
-        .vote-result-bar {
-            background: #2a2118;
-            border-radius: 4px;
-            margin: 4px 0;
-            overflow: hidden;
-            text-align: left;
+function createInitialState(playerIds) {
+    if (!Array.isArray(playerIds) || playerIds.length < 5) {
+        throw new Error("O jogo exige no mínimo 5 viajantes.");
+    }
+    const roles = ["ALDEAO", "MAGO", "PALADINO", "NECROMANTE"];
+    while (roles.length < playerIds.length) roles.push("ALDEAO");
+    const shuffled = shuffleArray(roles);
+    const players = {};
+    playerIds.forEach((id, i) => {
+        players[id] = { id, alive: true, role: shuffled[i], poisonPending: null };
+    });
+    return {
+        phase: "night_1",
+        nightIndex: 1,
+        round: 1,
+        players,
+        order: shuffleArray(playerIds),
+        actions: {}, // intenções noturnas por jogador
+        lastNecroKillTarget: null,
+        mageLastProtected: null,
+        witchLastTarget: null,
+        resurrectionUsed: false,
+        zombieActive: false,
+        pendingPoison: null, // { targetId, potionType }
+        dawnResolved: false,
+        voteResult: null,
+        hangText: null,
+        winner: null,
+        endReason: null,
+        privateLog: [],
+        publicLog: [],
+    };
+}
+
+// ============================================================================
+// 🌙 PROCESSAMENTO DAS AÇÕES NOTURNAS
+// ============================================================================
+
+function validateAction(state, playerId, action) {
+    const p = state.players[playerId];
+    if (!p || !p.alive) return { ok: false, reason: "Você não pode agir." };
+    switch (action.type) {
+        case "KILL":
+            if (p.role !== "NECROMANTE") return { ok: false, reason: "Só o Necromante mata." };
+            if (!state.players[action.target] || !state.players[action.target].alive) return { ok: false, reason: "Alvo inválido." };
+            break;
+        case "RESURRECT":
+            if (p.role !== "NECROMANTE") return { ok: false, reason: "Só o Necromante ressuscita." };
+            if (state.resurrectionUsed) return { ok: false, reason: "Ressurreição já usada." };
+            if (Object.values(state.players).some(x => !x.alive)) return { ok: false, reason: "Precisa haver um morto." };
+            break;
+        case "SNIFF":
+            if (p.role !== "ZUMBI" || !state.zombieActive) return { ok: false, reason: "Só o Zumbi fareja." };
+            break;
+        case "INVESTIGATE":
+            if (p.role !== "PALADINO") return { ok: false, reason: "Só o Paladino investiga." };
+            break;
+        case "PROTECT":
+            if (p.role !== "MAGO") return { ok: false, reason: "Só o Mago protege." };
+            if (action.target === state.mageLastProtected) return { ok: false, reason: "Não pode proteger o mesmo alvo duas noites seguidas." };
+            break;
+        case "POISON":
+            if (p.role !== "BRUXA") return { ok: false, reason: "Só a Bruxa envia poções." };
+            if (action.target === state.witchLastTarget) return { ok: false, reason: "A Bruxa não pode enviar ao mesmo alvo da noite anterior." };
+            if (!["desmaio", "forca"].includes(action.potionType)) return { ok: false, reason: "Poção inválida." };
+            break;
+        default:
+            return { ok: false, reason: "Ação desconhecida." };
+    }
+    return { ok: true };
+}
+
+function recordNightAction(state, playerId, action) {
+    const v = validateAction(state, playerId, action);
+    if (!v.ok) return v;
+    state.actions[playerId] = action;
+    return { ok: true };
+}
+
+function resolveNight(state) {
+    const events = [];
+    const necroAct = state.actions.NECRO || {};
+    const zumbiAct = state.actions.ZUMBI || {};
+    const palAct   = state.actions.PALADINO || {};
+    const magoAct  = state.actions.MAGO || {};
+    const bruxaAct = state.actions.BRUXA || {};
+
+    let killed = null;
+    if (necroAct.type === "KILL" && necroAct.target) {
+        killed = necroAct.target;
+    } else if (necroAct.type === "RESURRECT") {
+        state.resurrectionUsed = true;
+        const deadIds = Object.keys(state.players).filter(id => !state.players[id].alive);
+        if (deadIds.length > 0) {
+            const revived = deadIds[Math.floor(Math.random() * deadIds.length)];
+            state.players[revived].alive = true;
+            state.players[revived].role = "ZUMBI";
+            state.zombieActive = true;
+            events.push({ type: "RESURRECTION", target: revived });
         }
-        .vote-result-bar .fill {
-            background: linear-gradient(90deg, var(--blood), #d35400);
-            color: #fff;
-            padding: 4px 8px;
-            white-space: nowrap;
-            font-size: .85em;
+    }
+
+    let shielded = null;
+    if (magoAct.type === "PROTECT" && magoAct.target) {
+        shielded = magoAct.target;
+        state.mageLastProtected = magoAct.target;
+    }
+
+    let sniffed = null;
+    if (zumbiAct.type === "SNIFF" && zumbiAct.target) {
+        sniffed = zumbiAct.target;
+        if (state.players[sniffed] && state.players[sniffed].role === "MAGO") {
+            killed = sniffed; // ignora escudo!
+            events.push({ type: "ZUMBI_HUNT", target: sniffed });
         }
-        .countdown { font-size: 2em; color: var(--danger); font-weight: bold; }
-        .small { font-size: .8em; color: var(--muted); }
-        .code-display {
-            font-size: 2.2em;
-            letter-spacing: 8px;
-            color: var(--gold);
-            background: var(--bg-panel-dark);
-            border: 1px dashed var(--gold);
-            padding: 8px 20px;
-            display: inline-block;
-            border-radius: 6px;
-            user-select: all;
+    }
+
+    if (killed && killed === shielded && !events.some(e => e.type === "ZUMBI_HUNT")) {
+        events.push({ type: "SHIELD_BLOCK", target: killed });
+        killed = null;
+    }
+
+    if (killed) {
+        state.players[killed].alive = false;
+        events.push({ type: "DEATH", target: killed });
+        state.lastNecroKillTarget = killed;
+    }
+
+    if (palAct.type === "INVESTIGATE" && palAct.target) {
+        const aura = ROLES[state.players[palAct.target].role].aura;
+        events.push({ type: "AURA_REPORT", investigator: "PALADINO", target: palAct.target, aura });
+    }
+
+    if (bruxaAct.type === "POISON" && bruxaAct.target) {
+        state.pendingPoison = { targetId: bruxaAct.target, potionType: bruxaAct.potionType };
+        state.witchLastTarget = bruxaAct.target;
+    }
+
+    state.privateLog.push(...events);
+    return events;
+}
+
+// ============================================================================
+// ☀️ AMANHECER / VOTAÇÃO / FORCA
+// ============================================================================
+
+function resolveDawnChoice(state, playerId, choice) {
+    if (state.phase !== `dawn_${state.nightIndex}`) return { ok: false, reason: "Fora do amanhecer." };
+    if (!state.pendingPoison || state.pendingPoison.targetId !== playerId) return { ok: false, reason: "Sem presente para você." };
+    const pp = state.pendingPoison;
+    state.pendingPoison = null;
+    state.dawnResolved = true;
+    if (choice === "drink") {
+        state.players[playerId].poisonEffect = pp.potionType;
+        state.privateLog.push({ type: "DRANK_POTION", target: playerId, potion: pp.potionType });
+    } else {
+        state.privateLog.push({ type: "DISCARDED_POTION", target: playerId });
+    }
+    return { ok: true };
+}
+
+function tallyVotes(state) {
+    const votes = state.votes || {};
+    const counts = {};
+    for (const [voter, target] of Object.entries(votes)) {
+        if (!target || target === "SKIP") continue;
+        const w = state.players[voter]?.poisonEffect === "forca" ? 2 : 1;
+        counts[target] = (counts[target] || 0) + w;
+    }
+    return counts;
+}
+
+function applyHanging(state) {
+    const counts = tallyVotes(state);
+    const max = Math.max(0, ...Object.values(counts));
+    const top = Object.keys(counts).filter(k => counts[k] === max);
+    if (top.length !== 1 || max === 0) {
+        state.hangText = "EMPATE ou NINGUÉM votou. A vila dorme viva.";
+        return null;
+    }
+    const hanged = top[0];
+    state.players[hanged].alive = false;
+    state.hangText = `${state.players[hanged].name || hanged} sobe à forca.`;
+    return hanged;
+}
+
+// ============================================================================
+// 🏆 CONDIÇÕES DE VITÓRIA
+// ============================================================================
+
+function checkWinner(state) {
+    const alive = Object.values(state.players).filter(p => p.alive);
+    const villains = alive.filter(p => ROLES[p.role].faction === "vilao").length;
+    const innocents = alive.filter(p => ROLES[p.role].faction === "aldeia").length;
+    const witchAlive = alive.some(p => p.role === "BRUXA");
+    if (witchAlive && villains === 0) return { winner: "neutra", reason: "A Bruxa chegou viva ao fim." };
+    if (villains >= innocents) return { winner: "viloes", reason: "Os vilões dominaram a vila." };
+    if (villains === 0) return { winner: "aldeia", reason: "Todas as ameaças foram eliminadas." };
+    return null;
+}
+
+// ============================================================================
+// 🧠 HELPERS EXPORTADOS
+// ============================================================================
+
+function getAlivePlayerIds(state) {
+    return Object.values(state.players).filter(p => p.alive).map(p => p.id);
+}
+
+function isVillain(roleKey) { return ROLES[roleKey]?.faction === "vilao"; }
+
+globalThis.IIS_ENGINE = {
+    ROLES, NIGHT_ORDER,
+    createInitialState, validateAction, recordNightAction, resolveNight,
+    resolveDawnChoice, tallyVotes, applyHanging, checkWinner,
+    getAlivePlayerIds, isVillain, shuffleArray,
+};
+/* ===================== ENGINE.JS TERMINA AQUI ===================== */
+
+</script>
+<script>
+/* ===================== ARBITER.JS COMEÇA AQUI ===================== */
+"use strict";
+
+// ============================================================================
+// ⚖️ ÁRBITRO — Máquina de fases com timers (host-authoritative)
+// Avança fases automaticamente quando os deadlines estouram.
+// ============================================================================
+
+const PHASE_DURATIONS = {
+    night_step_timeout: 60_000,
+    dawn: 25_000,
+    day: 180_000,
+    vote: 60_000,
+    hanging: 15_000,
+};
+
+function advancePhase(state, now = Date.now()) {
+    const m = state.phase.match(/^(night|dawn|day|vote|hang)_(\d+)$/);
+    if (!m) return state;
+    const [, kind, idxStr] = m;
+    const idx = parseInt(idxStr, 10);
+    switch (kind) {
+        case "night": {
+            const events = IIS_ENGINE.resolveNight(state);
+            state.publicLog.push(...events.map(e => ({ type: e.type, at: now })));
+            state.phase = `dawn_${idx}`;
+            state.deadline = now + PHASE_DURATIONS.dawn;
+            break;
         }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: .75em;
-            border: 1px solid var(--muted);
-            color: var(--muted);
-            margin-left: 6px;
+        case "dawn": {
+            state.dawnResolved = true;
+            state.phase = `day_${idx}`;
+            state.deadline = now + PHASE_DURATIONS.day;
+            break;
         }
-        .badge.host { border-color: var(--gold); color: var(--gold); }
-        .badge.dead-badge { border-color: var(--danger); color: #ff7b6b; }
-        details.manual { text-align: left; margin: 10px auto; max-width: 760px; }
-        details.manual summary { cursor: pointer; color: var(--gold); }
-        details.manual .manual-body { font-size: .85em; color: var(--muted); line-height: 1.5; }
-    </style>
-</head>
-<body>
-    <h1>⚔️ If I Sleep...</h1>
-    <p class="subtitle">Sobrevivência medieval e dedução social baseada em texto</p>
+        case "day": {
+            state.votes = {};
+            state.phase = `vote_${idx}`;
+            state.deadline = now + PHASE_DURATIONS.vote;
+            break;
+        }
+        case "vote": {
+            const hanged = IIS_ENGINE.applyHanging(state);
+            state.phase = `hang_${idx}`;
+            state.deadline = now + PHASE_DURATIONS.hanging;
+            state.voteResult = { hanged };
+            break;
+        }
+        case "hang": {
+            const w = IIS_ENGINE.checkWinner(state);
+            if (w) {
+                state.winner = w.winner;
+                state.endReason = w.reason;
+                state.phase = "end";
+            } else {
+                state.nightIndex += 1;
+                state.round += 1;
+                state.actions = {};
+                state.phase = `night_${state.nightIndex}`;
+                state.deadline = now + PHASE_DURATIONS.night_step_timeout;
+            }
+            break;
+        }
+    }
+    return state;
+}
 
-    <details class="manual">
-        <summary>📜 Manual das Regras</summary>
-        <div class="manual-body" id="manual-body">
-            <!-- preenchido por JS -->
-        </div>
-    </details>
+globalThis.IIS_ARBITER = {
+    PHASE_DURATIONS,
+    advancePhase,
+};
+/* ===================== ARBITER.JS TERMINA AQUI ===================== */
+     pushPrivate(s, bId, { type: "giftSent",
+            text: `🧪 Você enviou a Poção ${acts.bruxaGift.potion === "desmaio" ? "do Desmaio 😵" : "da Força 💪"} para ${s.players[acts.bruxaGift.targetId]?.name}.` });
+    } else {
+        s.pendingPotion = null;
+    }
 
-    <!-- ================= TELA 1: ENTRADA ================= -->
-    <div id="screen-entry" class="screen active">
-        <div class="panel">
-            <p>"Aproxime-se do fogo. Diga-me, qual o seu nome?"</p>
-            <input type="text" id="player-name" placeholder="Seu nome..." maxlength="16">
-            <br>
-            <button id="btn-create" class="primary">🍺 Criar Nova Taverna</button>
-            <button id="btn-join">🚪 Entrar com um Código</button>
-            <input type="text" id="room-code-input" placeholder="CÓDIGO" maxlength="4" style="width: 100px; text-transform: uppercase;">
-        </div>
-    </div>
+    // ---- Aplica mortes ----
+    for (const d of deaths) {
+        const v = s.players[d.id];
+        if (!v || !v.alive) continue;
+        v.alive = false;
+        const bank = d.cause === "zumbi" ? "deathZombie" : "deathMurder";
+        s.log.push({ type: "death", id: d.id, cause: d.cause,
+            text: BARDO.say(bank, { nome: v.name }, rng) });
+    }
+    if (deaths.length === 0 && !reviveUsed && saveds.length === 0) {
+        s.log.push({ type: "peace", text: BARDO.say("noDeaths", {}, rng) });
+    }
 
-    <!-- ================= TELA 2: LOBBY ================= -->
-    <div id="screen-lobby" class="screen">
-        <div class="panel">
-            <h3>Taverna — Código da Sessão</h3>
-            <div class="code-display" id="room-code-display">----</div>
-            <p class="small">Compartilhe este código. Todos devem abrir o jogo no navegador e entrar com ele.</p>
-        </div>
-        <div class="panel">
-            <h3>Viajantes junto ao fogo <span class="small" id="lobby-count"></span></h3>
-            <ul id="lobby-players" class="alive-list"></ul>
-        </div>
-        <div class="panel">
-            <h3>Escolha dos Papéis</h3>
-            <p class="small" id="roles-explain"></p>
-            <ul id="setup-list" class="alive-list"></ul>
-        </div>
-        <button id="btn-start" class="primary" style="display:none;">🌙 Cair da Noite (Iniciar Jogo)</button>
-        <p class="small" id="waiting-note"></p>
-    </div>
+    // Reset de efeitos diurnos de noites anteriores
+    for (const p of Object.values(s.players)) { p.mutedToday = false; p.doubleVote = false; }
 
-    <!-- ================= TELA 3: JOGO ================= -->
-    <div id="screen-game" class="screen">
-        <div class="topbar">
-            <div class="card">
-                <div class="label">Sua Identidade</div>
-                <div id="my-role-card">—</div>
-                <button id="btn-help" style="margin-top:6px; font-size:.8em; padding:4px 8px;">Lembrar minha Habilidade</button>
-                <p id="help-text" style="display:none; font-style:italic; color:#aaa;"></p>
-            </div>
-            <div class="card">
-                <div class="label">Aldeia</div>
-                <ul id="game-alive-list" class="alive-list"></ul>
-            </div>
-            <div class="card">
-                <div class="label">Mensagens Secretas</div>
-                <ul id="private-log" class="alive-list" style="font-size:.85em;"></ul>
-            </div>
-        </div>
+    s.actions = {};
+    s.winner = checkWinner(s);
+    return s;
+}
 
-        <div id="phase-banner" class="phase-banner"></div>
-        <div class="bardo" id="bardo-line"></div>
+// Helpers de mensagens privadas (outbox por destinatário, entregue pelo árbitro
+// via envelope em /rooms/{code}/inbox/{uid} e limado do estado a cada entrega).
+function pushPrivate(state, to, msg) {
+    if (!state.outbox) state.outbox = {};
+    (state.outbox[to] = state.outbox[to] || []).push(msg);
+    // Cópia para a fila de entrega legado ({ to, ...msg }) — usada pelo host
+    // clássico do navegador; o árbitro das Functions usa apenas o outbox.
+    if (Array.isArray(state.privates)) state.privates.push({ to, ...msg });
+}
+function drainOutbox(state) {
+    // Retorna o outbox e limpa o estado (uso: árbitro entrega e segue adiante).
+    const box = state.outbox || {};
+    state.outbox = {};
+    return box;
+}
 
-        <!-- Painel da NOITE -->
-        <div id="panel-night" class="panel" style="display:none;">
-            <h3 id="night-title">Ações Noturnas</h3>
-            <div id="night-status" class="small"></div>
-            <div id="night-action"></div>
-        </div>
+// Dilema do amanhecer: aplica a decisão do alvo sobre a poção.
+function resolveDawn(state, decision /* 'drink' | 'discard' | null */, rng = Math.random) {
+    const s = JSON.parse(JSON.stringify(state));
+    const pend = s.pendingPotion;
+    if (pend) {
+        const t = s.players[pend.targetId];
+        if (t && t.alive) {
+            if (decision === "drink") {
+                if (pend.potion === "desmaio") {
+                    t.mutedToday = true;
+                    s.log.push({ type: "system", text: `${t.name} bebeu o frasco misterioso ao amanhecer.` });
+                } else {
+                    t.doubleVote = true;
+                    s.log.push({ type: "system", text: `${t.name} bebeu o frasco misterioso ao amanhecer.` });
+                }
+            } else if (decision === "discard") {
+                s.log.push({ type: "system", text: `${t.name} desconfiou do frasco e o jogou na lareira.` });
+            } else {
+                s.log.push({ type: "system", text: `O tempo passou e ${t.name} deixou o frasco intocado.` });
+            }
+        }
+        s.pendingPotion = null;
+    }
+    return s;
+}
 
-        <!-- Painel do AMANHECER (poção) -->
-        <div id="panel-dawn" class="panel" style="display:none;">
-            <h3>☀️ O Amanhecer — Um Presente Misterioso</h3>
-            <p id="dawn-text"></p>
-            <button id="btn-drink" class="primary">🧪 Beber o Frasco</button>
-            <button id="btn-discard" class="danger">🗑️ Descartar na Lareira</button>
-            <p class="small">Você tem pouco tempo para decidir antes que a vila acorde...</p>
-        </div>
+// ---- Votação ----
+// tallyVotes: votos { voterId: targetId|"skip" }, peso 2 para doubleVote.
+function tallyVotes(state, votes) {
+    const counts = {};
+    for (const [voterId, targetId] of Object.entries(votes)) {
+        const voter = state.players[voterId];
+        if (!voter || !voter.alive) continue;
+        if (voter.mutedToday) continue;              // mutada não vota
+        if (!targetId || targetId === "skip") continue;
+        const target = state.players[targetId];
+        if (!target || !target.alive) continue;
+        const weight = voter.doubleVote ? 2 : 1;
+        counts[targetId] = (counts[targetId] || 0) + weight;
+    }
+    let top = null, max = 0;
+    const tiedIds = [];
+    for (const [id, c] of Object.entries(counts)) {
+        if (c > max) { max = c; top = id; tiedIds.length = 0; tiedIds.push(id); }
+        else if (c === max) { tiedIds.push(id); }
+    }
+    const tie = tiedIds.length > 1;
+    return { counts, top: tie ? null : top, tie, total: max };
+}
 
-        <!-- Painel do DIA (chat) -->
-        <div id="panel-day" class="panel" style="display:none;">
-            <h3>💬 Praça da Vila — Debate</h3>
-            <div id="chat-box"></div>
-            <input type="text" id="chat-input" placeholder="Diga sua verdade..." maxlength="200" style="width: 60%;">
-            <button id="btn-send-chat">Falar</button>
-            <p class="small" id="chat-timer-note"></p>
-            <br>
-            <button id="btn-open-vote" class="primary" style="display:none;">⚖️ Encerrar o Debate → Iniciar Votação</button>
-        </div>
+// Executa o enforcamento — retorna novo estado + texto.
+function applyHanging(state, hangedId, rng = Math.random) {
+    const s = JSON.parse(JSON.stringify(state));
+    if (hangedId && s.players[hangedId] && s.players[hangedId].alive) {
+        s.players[hangedId].alive = false;
+        s.log.push({ type: "hang", id: hangedId,
+            text: BARDO.say("deathHang", { nome: s.players[hangedId].name }, rng) });
+    } else {
+        s.log.push({ type: "tie", text: BARDO.say("voteTie", {}, rng) });
+    }
+    s.winner = checkWinner(s);
+    return s;
+}
 
-        <!-- Painel da VOTAÇÃO -->
-        <div id="panel-vote" class="panel" style="display:none;">
-            <h3>⚖️ Julgamento Secreto</h3>
-            <p class="small">O Bardo conta os votos em silêncio. O mais apontado sobe à forca.</p>
-            <div id="vote-timer" class="countdown"></div>
-            <div id="vote-area"></div>
-            <p id="vote-status" class="small"></p>
-        </div>
+// ---- Condições de vitória ----
+// Regra oficial (empate Bruxa × Aldeia resolvido):
+//   1. Vilões vencem imediatamente quando vilões vivos ≥ inocentes vivos.
+//   2. Sem vilões vivos: a Bruxa vence APENAS se estiver viva (vitória neutra);
+//      caso contrário a Aldeia vence.
+function checkWinner(state) {
+    const alive = aliveIds(state);
+    const villains = alive.filter(id => ROLES[state.players[id].role]?.faction === "vilao");
+    const innocents = alive.filter(id => ROLES[state.players[id].role]?.faction === "aldeia");
+    const witchAlive = alive.some(id => state.players[id].role === "BRUXA");
 
-        <!-- Resultado da votação -->
-        <div id="panel-hanging" class="panel" style="display:none;">
-            <h3>🪢 A Forca Fala</h3>
-            <div id="hang-text"></div>
-            <div id="vote-results"></div>
-        </div>
-    </div>
+    if (villains.length > 0 && villains.length >= innocents.length) return "viloes";
+    if (villains.length === 0) return witchAlive ? "bruxa" : "aldeia";
+    return null;
+}
 
-    <!-- ================= TELA 4: FIM DE JOGO ================= -->
-    <div id="screen-end" class="screen">
-        <div class="panel">
-            <h2 id="end-title">Fim</h2>
-            <div class="bardo" id="end-bardo"></div>
-            <div id="end-summary" style="text-align:left;"></div>
-            <button id="btn-back-lobby" class="primary">Voltar à Taverna</button>
-        </div>
-    </div>
+// Maldição do chat do Zumbi: texto vira sons incompreensíveis
+function zombieGibberish(text, rng = Math.random) {
+    const words = String(text).trim().split(/\s+/).filter(Boolean);
+    const n = Math.max(2, Math.min(6, words.length));
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(BARDO.zombieGibberish[Math.floor(rng() * BARDO.zombieGibberish.length)]);
+    return out.join(" ");
+}
+
+// Cédula do Zumbi: nomes reais substituídos por nonsense embaralhado
+function zombieBallot(state, myId, rng = Math.random) {
+    const targets = aliveIds(state).filter(id => id !== myId);
+    const names = shuffleArray(BARDO.zombieNames, rng);
+    const order = shuffleArray(targets, rng);
+    return order.map((id, i) => ({ label: names[i % names.length], value: id }));
+}
+
+// ---------------- Exportações (Node + browser) ----------------
+const ENGINE = {
+    ROLES, NIGHT_ORDER, BARDO, HELP_TEXT, MANUAL_HTML,
+    shuffleArray, mulberry32, computeSetup, assignRoles, newState,
+    validateAction, recordAction, resolveNight, resolveDawn,
+    tallyVotes, applyHanging, checkWinner, zombieGibberish, zombieBallot,
+    aliveIds, deadIds, hasRole, idByRole, pushPrivate, drainOutbox,
+    MIN_PLAYERS, MAX_PLAYERS,
+};
+
+// Em módulos ES do navegador, `module` não existe — usar typeof direto pode
+// lançar ReferenceError. try/catch garante que o export global sempre rode.
+try {
+    if (typeof module !== "undefined" && module.exports) module.exports = ENGINE;
+} catch (e) { /* browser: module é indefinido */ }
+if (typeof globalThis !== "undefined") {
+    globalThis.IIS_ENGINE = ENGINE;
+}
+/* ===================== ENGINE.JS TERMINA AQUI ===================== */
+    </script>
+
+    <script>
+/* ===================== ARBITER.JS COMEÇA AQUI ===================== */
+"use strict";
+
+// ============================================================================
+// ⚖️ ÁRBITRO — lógica de fases/validação SEM dependência de Firebase/DOM.
+// O mesmo código roda:
+//   • no NAVEGADOR  → host da sala (app.js) aplica via RTDB direto
+//   • na CLOUD FUNCTION → arbitrate/index.js (admin RTDB) — modo "árbitro"
+// Cada função recebe dados "crus" e devolve os dados já transformados; quem
+// chama é responsável por persistir.
+// ============================================================================
+
+// No Node (testes/functions): require. No navegador: usa o IIS_ENGINE já exposto
+// pelos <script> do index.html ou pelo import "./engine.js" do app.js.
+let E;
+try {
+    if (typeof window === "undefined" && typeof require === "function") {
+        E = require("./engine.js");
+    } else {
+        E = globalThis.IIS_ENGINE;
+    }
+} catch (e) {
+    E = globalThis.IIS_ENGINE;
+}
+
+const NIGHT_STEP_MS = 60000;   // timeout por passo da noite
+const DAWN_MS   = 25000;       // dilema da poção
+const DAY_MS    = 180000;      // debate na praça
+const VOTE_MS   = 60000;       // julgamento secreto
+const HANG_MS   = 15000;       // exibição do veredito
+
+function phaseBase(phase) { return String(phase || "").replace(/_\d+$/, ""); }
+
+// Quem deve agir no passo atual da noite (lista de uids).
+function currentStepActors(state, stepIndex) {
+    const kind = E.NIGHT_ORDER[stepIndex];
+    const roleId = { NECRO: "NECROMANTE", ZUMBI: "ZUMBI", PALADINO: "PALADINO", MAGO: "MAGO", BRUXA: "BRUXA" }[kind];
+    const id = E.idByRole(state, roleId);
+    if (!id || !state.players[id].alive) return [];
+    // Zumbi criado nesta noite ainda não age.
+    if (roleId === "ZUMBI" && state.players[id].zombieSince === state.night) return [];
+    return [id];
+}
+
+function stepDone(state, stepIndex) {
+    const actors = currentStepActors(state, stepIndex);
+    const kind = E.NIGHT_ORDER[stepIndex];
+    const actKey = {
+        NECRO: ["necroKill", "necroRevive"], ZUMBI: ["zumbiSniff"],
+        PALADINO: ["paladinoCheck"], MAGO: ["magoShield"], BRUXA: ["bruxaGift"],
+    }[kind];
+    return actors.every(a => actKey.some(k => state.actions[k] && state.actions[k].by === a));
+}
+
+// Valida um pedido de ação noturna vindo de um cliente autenticado.
+// Retorna { ok } ou { ok:false, reason }. NÃO muta nada.
+function validateNightRequest(state, room, uid, req) {
+    if (!state) return { ok: false, reason: "Partida não iniciada." };
+    if (phaseBase(room.phase) !== "night") return { ok: false, reason: "Não é noite." };
+    const step = state.stepIndex ?? 0;
+    if (step >= E.NIGHT_ORDER.length) return { ok: false, reason: "A noite já terminou." };
+    const actors = currentStepActors(state, step);
+    if (!actors.includes(uid)) return { ok: false, reason: "Não é a sua vez de agir." };
+    const c = E.validateAction(state, uid, req.kind, req.targetId, req.extra);
+    if (!c.ok) return { ok: false, reason: c.reason };
+    return { ok: true };
+}
+
+// Aplica uma ação noturna validada ao estado (retorna novo estado).
+function applyNightAction(state, uid, req) {
+    const s = JSON.parse(JSON.stringify(state));
+    const check = E.validateAction(s, uid, req.kind, req.targetId, req.extra);
+    if (!check.ok) return { state: s, rejected: check.reason };
+    const key = {
+        necro_kill: "necroKill", necro_revive: "necroRevive", zumbi_sniff: "zumbiSniff",
+        paladino_check: "paladinoCheck", mago_shield: "magoShield", bruxa_gift: "bruxaGift",
+    }[req.kind];
+    s.actions[key] = { by: uid, targetId: req.targetId || null, potion: req.extra || null };
+    if (req.kind === "necro_revive") s.actions.necroReviveUsed = true;
+    return { state: s, rejected: null };
+}
+
+// Decide o próximo passo após registrar ações. Descritor puro:
+//  { action:"advanceStep", stepIndex } | { action:"endNight" } | { action:"wait" }
+function planAfterAction(state) {
+    const step = state.stepIndex ?? 0;
+    if (stepDone(state, step)) {
+        if (step + 1 < E.NIGHT_ORDER.length) {
+            return { action: "advanceStep", stepIndex: step + 1 };
+        }
+        return { action: "endNight" };
+    }
+    return { action: "wait" };
+}
+
+// Resolução do fim da noite → estado + fase seguinte + deadlines.
+function endNight(state, now) {
+    const resolved = E.resolveNight(state);
+    resolved.stepIndex = 0;
+    resolved.votes = {};
+    let nextPhase;
+    if (resolved.winner) nextPhase = "finished";
+    else if (resolved.pendingPotion) nextPhase = "dawn_" + resolved.night;
+    else nextPhase = "day_" + resolved.night;
+    return {
+        state: resolved,
+        phase: nextPhase,
+        dayDeadline: nextPhase.startsWith("day_") ? now + DAY_MS : null,
+        dawnDeadline: nextPhase.startsWith("dawn_") ? now + DAWN_MS : null,
+    };
+}
+
+// Abre a votação secreta.
+function openVote(state, now) {
+    const s = JSON.parse(JSON.stringify(state));
+    s.votes = {};
+    return { state: s, phase: "vote_" + s.night, voteDeadline: now + VOTE_MS, dayDeadline: null };
+}
+
+// Fecha a votação: apura, enforca, calcula próxima fase.
+function closeVote(state, now) {
+    const votes = state.votes || {};
+    const res = E.tallyVotes(state, votes);
+    const after = E.applyHanging(state, res.top);
+    after.votes = {};
+    return {
+        state: after,
+        tally: res.counts,
+        phase: "hang_" + state.night,
+        hangDeadline: now + HANG_MS,
+        voteDeadline: null,
+        winner: after.winner,
+    };
+}
+
+// Próxima noite (após o veredito), se ninguém venceu.
+function startNextNight(state) {
+    if (state.winner) return { phase: "finished", state };
+    const next = JSON.parse(JSON.stringify(state));
+    next.night = state.night + 1;
+    next.stepIndex = 0;
+    next.actions = {};
+    next.pendingPotion = null;
+    next.log = [];
+    next.outbox = {};
+    return {
+        state: next,
+        phase: "night_" + next.night,
+        hangDeadline: null, dayDeadline: null, voteDeadline: null,
+    };
+}
+
+// Amanhecer: aplica decisão da poção (ou timeout) e segue para o dia.
+function resolveDawnPhase(state, decision, now) {
+    const resolved = E.resolveDawn(state, decision);
+    return {
+        state: resolved,
+        phase: "day_" + resolved.night,
+        dayDeadline: now + DAY_MS,
+        dawnDeadline: null,
+    };
+}
+
+// Valida voto: vivo, não mutado, única vez, alvo válido.
+function validateVote(state, uid, value) {
+    const voter = state.players[uid];
+    if (!voter || !voter.alive) return { ok: false };
+    if (voter.mutedToday) return { ok: false };
+    if (state.votes && state.votes[uid] !== undefined) return { ok: false, dup: true };
+    if (value !== "skip" && (!state.players[value] || !state.players[value].alive)) return { ok: false };
+    return { ok: true };
+}
+
+// Revelação final (fim de jogo): só o árbitro conhece os papéis até aqui.
+function buildReveal(state) {
+    const reveal = {};
+    for (const [id, p] of Object.entries(state.players)) reveal[id] = { role: p.role, alive: p.alive };
+    return reveal;
+}
+
+// Entrega os envelopes privados do outbox para dentro de state.privates
+// (a UI só exibe a lista do próprio uid). Usado tanto pelo host clássico
+// quanto pelas Cloud Functions ao registrar ações/resultados.
+function foldOutboxIntoPrivates(state) {
+    const s = JSON.parse(JSON.stringify(state));
+    const privates = s.privates || {};
+    for (const [uid, msgs] of Object.entries(s.outbox || {})) {
+        if (!msgs || !msgs.length) continue;
+        privates[uid] = (privates[uid] || []).concat(msgs.map(m => ({ ...m, at: Date.now() })));
+    }
+    s.privates = privates;
+    s.outbox = {};
+    return s;
+}
+
+// Sanitiza o estado completo ANTES de escrevê-lo em game/state (nó público):
+//  • transforma a fila legado privates:[{to,text}] em mapa uid→[mensagens];
+//  • remove segredos que não devem ser replicados no nó público:
+//    actions (intenções noturnas com alvos), pendingPotion (tipo da poção) e
+//    outbox (envelopes ainda não entregues).
+// O host mantém uma cópia completa (com segredos) na memória/localStorage —
+// é assim que o Paladino continua recebendo o Radar Sombrio mesmo sem o
+// bloco secreto secretState no banco.
+function sanitizePublicState(state) {
+    let s = state;
+    if (Array.isArray(s.privates)) {
+        const map = {};
+        for (const pm of s.privates) {
+            if (!pm || !pm.to) continue;
+            const { to, ...msg } = pm;
+            map[to] = (map[to] || []).concat([{ ...msg, at: msg.at || Date.now() }]);
+        }
+        s = { ...s, privates: map };
+    }
+    return { ...s, actions: {}, pendingPotion: null, outbox: {} };
+}
+
+// Remove pendências de fila ao trocar de fase (higiene da sala).
+function clearQueues() {
+    return { actionRequests: null, potionRequests: null, voteRequests: null };
+}
+
+// ---------------- Exportações (Node + browser) ----------------
+const ARBITER = {
+    NIGHT_STEP_MS, DAWN_MS, DAY_MS, VOTE_MS, HANG_MS,
+    phaseBase, currentStepActors, stepDone, validateNightRequest,
+    applyNightAction, planAfterAction, endNight, openVote, closeVote,
+    startNextNight, resolveDawnPhase, validateVote, buildReveal,
+    foldOutboxIntoPrivates, clearQueues, sanitizePublicState,
+};
+
+// Em módulos ES do navegador, `module` não existe — usar typeof direto pode
+// lançar ReferenceError. try/catch garante que o export global sempre rode.
+try {
+    if (typeof module !== "undefined" && module.exports) module.exports = ARBITER;
+} catch (e) { /* browser: module é indefinido */ }
+if (typeof globalThis !== "undefined") {
+    globalThis.IIS_ARBITER = ARBITER;
+}
+/* ===================== ARBITER.JS TERMINA AQUI ===================== */
+    </script>
 
     <script type="module" src="app.js"></script>
 </body>
