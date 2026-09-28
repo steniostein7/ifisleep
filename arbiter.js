@@ -168,12 +168,33 @@ function buildReveal(state) {
     return reveal;
 }
 
+// Entrega os envelopes privados do outbox para dentro de state.privates
+// (a UI só exibe a lista do próprio uid). Usado tanto pelo host clássico
+// quanto pelas Cloud Functions ao registrar ações/resultados.
+function foldOutboxIntoPrivates(state) {
+    const s = JSON.parse(JSON.stringify(state));
+    const privates = s.privates || {};
+    for (const [uid, msgs] of Object.entries(s.outbox || {})) {
+        if (!msgs || !msgs.length) continue;
+        privates[uid] = (privates[uid] || []).concat(msgs.map(m => ({ ...m, at: Date.now() })));
+    }
+    s.privates = privates;
+    s.outbox = {};
+    return s;
+}
+
+// Remove pendências de fila ao trocar de fase (higiene da sala).
+function clearQueues() {
+    return { actionRequests: null, potionRequests: null, voteRequests: null };
+}
+
 // ---------------- Exportações (Node + browser) ----------------
 const ARBITER = {
     NIGHT_STEP_MS, DAWN_MS, DAY_MS, VOTE_MS, HANG_MS,
     phaseBase, currentStepActors, stepDone, validateNightRequest,
     applyNightAction, planAfterAction, endNight, openVote, closeVote,
     startNextNight, resolveDawnPhase, validateVote, buildReveal,
+    foldOutboxIntoPrivates, clearQueues,
 };
 
 if (typeof module !== "undefined" && module.exports) {

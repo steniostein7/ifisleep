@@ -1,6 +1,6 @@
 // Testes do motor de regras (rodam em Node: node tests/engine.test.js)
 const assert = require("assert");
-const E = require("../app.js");
+const E = require("../engine.js");
 
 let passed = 0;
 function test(name, fn) {
