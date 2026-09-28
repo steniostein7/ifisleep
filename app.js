@@ -305,7 +305,7 @@ function resolveNight(state, rng = Math.random) {
         if (t) {
             const aura = ROLES[t.role] ? ROLES[t.role].aura : "pura";
             s.privates.push({ to: palId,
-                text: `🔍 A aura de ${t.name} é ${aura === "pura" ? "PU ✨ RÁ" : "CO RR OM PI DA"} (${aura}).` });
+                text: `🔍 A aura de ${t.name} é ${aura === "pura" ? "PU✨RA" : "CORROMPI💀DA"}.` });
         }
         if (zumbiSniffed && s.players[zumbiSniffed]) {
             s.privates.push({ to: palId,
