@@ -1,0 +1,14 @@
+{
+  "rules": {
+    // AVISO: regras abertas apenas para desenvolvimento/testes.
+    // ANTES DE PUBLICAR O JOGO:
+    //   1. Ative a Autenticação Anônima no Firebase.
+    //   2. Substitua estas regras por verificações de auth.uid e por
+    //      regras que impeçam clientes de escrever em /game/state,
+    //      /game/private e /game/log (somente o host deve poder).
+    "game": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}

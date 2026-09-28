@@ -3,61 +3,312 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>If I Sleep...</title>
+    <title>If I Sleep... — Sobrevivência Medieval</title>
     <style>
-        /* CSS básico com tema sombrio medieval */
-        body { 
-            background-color: #121212; 
-            color: #d4af37; /* Dourado envelhecido */
-            font-family: 'Courier New', Courier, monospace; 
-            text-align: center; 
-            padding: 50px; 
+        /* ===== Tema sombrio medieval ===== */
+        :root {
+            --bg: #121212;
+            --bg-panel: #1c1712;
+            --bg-panel-dark: #14100c;
+            --gold: #d4af37;
+            --blood: #8b0000;
+            --text: #e8dcc0;
+            --muted: #9a8f78;
+            --night: #4a90e2;
+            --day: #e2b13c;
+            --danger: #c0392b;
+            --ok: #27ae60;
         }
-        h1 { color: #8b0000; /* Vermelho sangue escuro */ }
-        input, button { 
-            padding: 10px; 
-            margin: 5px; 
-            font-family: inherit; 
+        * { box-sizing: border-box; }
+        body {
+            background-color: var(--bg);
+            background-image: radial-gradient(ellipse at top, #1e1a12 0%, #121212 70%);
+            color: var(--text);
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: var(--blood);
+            text-shadow: 0 0 12px rgba(139, 0, 0, .5);
+            letter-spacing: 2px;
+        }
+        h2, h3 { color: var(--gold); }
+        .subtitle { color: var(--muted); font-style: italic; margin-top: -10px; }
+        input, button, select {
+            padding: 10px 14px;
+            margin: 5px;
+            font-family: inherit;
+            font-size: 1em;
             background-color: #2a2a2a;
-            color: #d4af37;
-            border: 1px solid #d4af37;
+            color: var(--gold);
+            border: 1px solid var(--gold);
+            border-radius: 4px;
         }
-        button { cursor: pointer; }
-        button:hover { background-color: #d4af37; color: #121212; }
-        
-        /* Oculta a tela de jogo até o usuário digitar o nome */
-        #game-screen { display: none; }
+        button { cursor: pointer; transition: all .15s ease; }
+        button:hover:not(:disabled) { background-color: var(--gold); color: var(--bg); }
+        button:disabled { opacity: .45; cursor: not-allowed; }
+        button.primary { background-color: #3a2a10; font-weight: bold; }
+        button.danger { border-color: var(--danger); color: #ff7b6b; }
+        button.danger:hover:not(:disabled) { background-color: var(--danger); color: #fff; }
+        .screen { display: none; max-width: 760px; margin: 0 auto; }
+        .screen.active { display: block; }
         ul { list-style-type: none; padding: 0; }
+
+        .panel {
+            background: var(--bg-panel);
+            border: 1px solid #3d3220;
+            border-radius: 6px;
+            padding: 16px;
+            margin: 14px auto;
+        }
+        .bardo {
+            background: #1a0000;
+            border: 1px solid var(--blood);
+            border-radius: 6px;
+            padding: 16px;
+            margin: 16px auto;
+            font-size: 1.15em;
+            font-style: italic;
+            color: #f0c8a0;
+            min-height: 1.6em;
+        }
+        .bardo::before { content: "🎶 "; }
+        .phase-banner {
+            font-size: 1.3em;
+            font-weight: bold;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            padding: 8px;
+            border-top: 1px dashed var(--muted);
+            border-bottom: 1px dashed var(--muted);
+            margin: 10px 0;
+        }
+        .phase-noite { color: var(--night); text-shadow: 0 0 10px rgba(74,144,226,.4); }
+        .phase-amanhecer { color: #b07ce2; }
+        .phase-dia { color: var(--day); }
+        .phase-votacao { color: var(--danger); }
+
+        /* ===== Chat / Crônicas ===== */
+        #chat-box {
+            height: 260px;
+            overflow-y: auto;
+            text-align: left;
+            background: var(--bg-panel-dark);
+            border: 1px solid #3d3220;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 10px;
+            font-size: .95em;
+        }
+        #chat-box .msg { margin: 4px 0; word-wrap: break-word; }
+        #chat-box .msg .author { font-weight: bold; color: var(--gold); }
+        #chat-box .msg.system { color: #b07ce2; font-style: italic; }
+        #chat-box .msg.dead { color: #666; }
+        #chat-box .msg.zombie { color: #7fae6b; }
+        #chat-box .msg.death { color: #ff7b6b; font-weight: bold; }
+        .private-toast {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            max-width: 320px;
+            background: #241a2e;
+            border: 1px solid #b07ce2;
+            color: #e6d8ff;
+            padding: 12px 16px;
+            border-radius: 6px;
+            text-align: left;
+            z-index: 99;
+            box-shadow: 0 4px 18px rgba(0,0,0,.6);
+            animation: fadein .3s ease;
+        }
+        @keyframes fadein { from { opacity: 0; transform: translateY(10px);} to { opacity: 1; transform: none;} }
+
+        /* ===== Alvos (seleção de jogador) ===== */
+        .targets { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+        .target-btn { min-width: 130px; }
+        .target-btn.selected { background-color: var(--gold); color: var(--bg); font-weight: bold; }
+        .target-btn.eliminated { text-decoration: line-through; opacity: .4; }
+
+        /* ===== Cartões do topo do jogo ===== */
+        .topbar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: stretch; }
+        .card {
+            background: var(--bg-panel);
+            border: 1px solid #3d3220;
+            border-radius: 6px;
+            padding: 10px 14px;
+            flex: 1 1 200px;
+            text-align: left;
+            font-size: .9em;
+        }
+        .card .label { color: var(--muted); text-transform: uppercase; font-size: .8em; letter-spacing: 1px; }
+        .alive-list li { padding: 2px 0; }
+        .alive-list li.dead-name { color: #555; text-decoration: line-through; }
+
+        /* ===== Votação ===== */
+        .vote-result-bar {
+            background: #2a2118;
+            border-radius: 4px;
+            margin: 4px 0;
+            overflow: hidden;
+            text-align: left;
+        }
+        .vote-result-bar .fill {
+            background: linear-gradient(90deg, var(--blood), #d35400);
+            color: #fff;
+            padding: 4px 8px;
+            white-space: nowrap;
+            font-size: .85em;
+        }
+        .countdown { font-size: 2em; color: var(--danger); font-weight: bold; }
+        .small { font-size: .8em; color: var(--muted); }
+        .code-display {
+            font-size: 2.2em;
+            letter-spacing: 8px;
+            color: var(--gold);
+            background: var(--bg-panel-dark);
+            border: 1px dashed var(--gold);
+            padding: 8px 20px;
+            display: inline-block;
+            border-radius: 6px;
+            user-select: all;
+        }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: .75em;
+            border: 1px solid var(--muted);
+            color: var(--muted);
+            margin-left: 6px;
+        }
+        .badge.host { border-color: var(--gold); color: var(--gold); }
+        .badge.dead-badge { border-color: var(--danger); color: #ff7b6b; }
+        details.manual { text-align: left; margin: 10px auto; max-width: 760px; }
+        details.manual summary { cursor: pointer; color: var(--gold); }
+        details.manual .manual-body { font-size: .85em; color: var(--muted); line-height: 1.5; }
     </style>
 </head>
 <body>
-    <h1>If I Sleep...</h1>
-    
-    <!-- Tela de Entrada -->
-    <div id="lobby-screen">
-        <p>"Aproxime-se do fogo. Diga-me, qual o seu nome?"</p>
-        <input type="text" id="player-name" placeholder="Seu nome...">
-        <button id="btn-join">Entrar na Taverna</button>
-    </div>
+    <h1>⚔️ If I Sleep...</h1>
+    <p class="subtitle">Sobrevivência medieval e dedução social baseada em texto</p>
 
-    <!-- Tela do Jogo -->
-    <div id="game-screen">
-        <h2 id="welcome-message"></h2>
-        <p>Aguardando outros viajantes...</p>
-        
-        <ul id="players-list"></ul>
+    <details class="manual">
+        <summary>📜 Manual das Regras</summary>
+        <div class="manual-body" id="manual-body">
+            <!-- preenchido por JS -->
+        </div>
+    </details>
 
-        <!-- Botão para iniciar a partida (inicialmente oculto) -->
-        <button id="btn-start" style="display: none; margin: 20px auto;">Começar Jogo</button>
-        
-        <!-- Painel onde o jogador descobrirá quem ele é -->
-        <div id="my-role-display" style="display: none; margin-top: 20px; border: 1px dashed #d4af37; padding: 15px;">
-            <h3>Seu Papel:</h3>
-            <p id="role-text" style="font-size: 1.2em; font-weight: bold;"></p>
+    <!-- ================= TELA 1: ENTRADA ================= -->
+    <div id="screen-entry" class="screen active">
+        <div class="panel">
+            <p>"Aproxime-se do fogo. Diga-me, qual o seu nome?"</p>
+            <input type="text" id="player-name" placeholder="Seu nome..." maxlength="16">
+            <br>
+            <button id="btn-create" class="primary">🍺 Criar Nova Taverna</button>
+            <button id="btn-join">🚪 Entrar com um Código</button>
+            <input type="text" id="room-code-input" placeholder="CÓDIGO" maxlength="4" style="width: 100px; text-transform: uppercase;">
         </div>
     </div>
 
-    <!-- Importa o nosso script principal como um Módulo JS -->
+    <!-- ================= TELA 2: LOBBY ================= -->
+    <div id="screen-lobby" class="screen">
+        <div class="panel">
+            <h3>Taverna — Código da Sessão</h3>
+            <div class="code-display" id="room-code-display">----</div>
+            <p class="small">Compartilhe este código. Todos devem abrir o jogo no navegador e entrar com ele.</p>
+        </div>
+        <div class="panel">
+            <h3>Viajantes junto ao fogo <span class="small" id="lobby-count"></span></h3>
+            <ul id="lobby-players" class="alive-list"></ul>
+        </div>
+        <div class="panel">
+            <h3>Escolha dos Papéis</h3>
+            <p class="small" id="roles-explain"></p>
+            <ul id="setup-list" class="alive-list"></ul>
+        </div>
+        <button id="btn-start" class="primary" style="display:none;">🌙 Cair da Noite (Iniciar Jogo)</button>
+        <p class="small" id="waiting-note"></p>
+    </div>
+
+    <!-- ================= TELA 3: JOGO ================= -->
+    <div id="screen-game" class="screen">
+        <div class="topbar">
+            <div class="card">
+                <div class="label">Sua Identidade</div>
+                <div id="my-role-card">—</div>
+                <button id="btn-help" style="margin-top:6px; font-size:.8em; padding:4px 8px;">Lembrar minha Habilidade</button>
+                <p id="help-text" style="display:none; font-style:italic; color:#aaa;"></p>
+            </div>
+            <div class="card">
+                <div class="label">Aldeia</div>
+                <ul id="game-alive-list" class="alive-list"></ul>
+            </div>
+            <div class="card">
+                <div class="label">Mensagens Secretas</div>
+                <ul id="private-log" class="alive-list" style="font-size:.85em;"></ul>
+            </div>
+        </div>
+
+        <div id="phase-banner" class="phase-banner"></div>
+        <div class="bardo" id="bardo-line"></div>
+
+        <!-- Painel da NOITE -->
+        <div id="panel-night" class="panel" style="display:none;">
+            <h3 id="night-title">Ações Noturnas</h3>
+            <div id="night-status" class="small"></div>
+            <div id="night-action"></div>
+        </div>
+
+        <!-- Painel do AMANHECER (poção) -->
+        <div id="panel-dawn" class="panel" style="display:none;">
+            <h3>☀️ O Amanhecer — Um Presente Misterioso</h3>
+            <p id="dawn-text"></p>
+            <button id="btn-drink" class="primary">🧪 Beber o Frasco</button>
+            <button id="btn-discard" class="danger">🗑️ Descartar na Lareira</button>
+            <p class="small">Você tem pouco tempo para decidir antes que a vila acorde...</p>
+        </div>
+
+        <!-- Painel do DIA (chat) -->
+        <div id="panel-day" class="panel" style="display:none;">
+            <h3>💬 Praça da Vila — Debate</h3>
+            <div id="chat-box"></div>
+            <input type="text" id="chat-input" placeholder="Diga sua verdade..." maxlength="200" style="width: 60%;">
+            <button id="btn-send-chat">Falar</button>
+            <p class="small" id="chat-timer-note"></p>
+            <br>
+            <button id="btn-open-vote" class="primary" style="display:none;">⚖️ Encerrar o Debate → Iniciar Votação</button>
+        </div>
+
+        <!-- Painel da VOTAÇÃO -->
+        <div id="panel-vote" class="panel" style="display:none;">
+            <h3>⚖️ Julgamento Secreto</h3>
+            <p class="small">O Bardo conta os votos em silêncio. O mais apontado sobe à forca.</p>
+            <div id="vote-timer" class="countdown"></div>
+            <div id="vote-area"></div>
+            <p id="vote-status" class="small"></p>
+        </div>
+
+        <!-- Resultado da votação -->
+        <div id="panel-hanging" class="panel" style="display:none;">
+            <h3>🪢 A Forca Fala</h3>
+            <div id="hang-text"></div>
+            <div id="vote-results"></div>
+        </div>
+    </div>
+
+    <!-- ================= TELA 4: FIM DE JOGO ================= -->
+    <div id="screen-end" class="screen">
+        <div class="panel">
+            <h2 id="end-title">Fim</h2>
+            <div class="bardo" id="end-bardo"></div>
+            <div id="end-summary" style="text-align:left;"></div>
+            <button id="btn-back-lobby" class="primary">Voltar à Taverna</button>
+        </div>
+    </div>
+
     <script type="module" src="app.js"></script>
 </body>
 </html>
