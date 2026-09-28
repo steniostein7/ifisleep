@@ -105,7 +105,7 @@ test("Paladino recebe aura e Radar Sombrio", () => {
     st.actions = { paladinoCheck: { by: "p", targetId: "n" }, zumbiSniff: { by: "z", targetId: "v1" } };
     const after = E.resolveNight(st, E.mulberry32(4));
     const privs = after.privates.filter(x => x.to === "p");
-    assert.ok(privs.some(x => /corrompida/i.test(x.text.replace(/\s/g, "")) || /CO RR/.test(x.text)));
+    assert.ok(privs.some(x => /CORROMPI/.test(x.text)));
     assert.ok(privs.some(x => x.text.includes("Radar Sombrio") && x.text.includes("v1")));
 });
 
