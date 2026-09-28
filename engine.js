@@ -251,6 +251,9 @@ function resolveNight(state, rng = Math.random) {
     const deaths = [];       // [{id, cause}] causas: necro | zumbi
     const saveds = [];       // ids salvos pelo escudo
     s.log = []; s.outbox = {};
+    // Lista de entrega (legado): cada pushPrivate também entra aqui como
+    // { to, ...msg } para consumidores antigos (app.js host clássico).
+    s.privates = [];
 
     const necroTargetId = acts.necroKill ? acts.necroKill.targetId : null;
     const shieldTargetId = acts.magoShield ? acts.magoShield.targetId : null;
@@ -351,6 +354,9 @@ function resolveNight(state, rng = Math.random) {
 function pushPrivate(state, to, msg) {
     if (!state.outbox) state.outbox = {};
     (state.outbox[to] = state.outbox[to] || []).push(msg);
+    // Cópia para a fila de entrega legado ({ to, ...msg }) — usada pelo host
+    // clássico do navegador; o árbitro das Functions usa apenas o outbox.
+    if (Array.isArray(state.privates)) state.privates.push({ to, ...msg });
 }
 function drainOutbox(state) {
     // Retorna o outbox e limpa o estado (uso: árbitro entrega e segue adiante).
